@@ -13,7 +13,7 @@ def attach_indicators(df):
 
     df = pd.concat([df, ema_high, ema_low], axis=1)
 
-    keys = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'EMA_HIGH', 'EMA_LOW']
+    keys = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 'CANDLE_PERCENTAGE', 'EMA_HIGH', 'EMA_LOW']
     df.columns = keys
 
     df = df[df['EMA_LOW'].notna()]

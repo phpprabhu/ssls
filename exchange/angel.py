@@ -356,18 +356,18 @@ def get_order_status(angel_obj, order_id):
 def get_3min_olhcv(angel_obj, option):
     timeframe = '3m'
     [nse_interval, nse_max_days_per_interval, is_custom_interval] = get_angel_timeframe_details(timeframe)
-    df_index = get_historical_data(angel_obj, option.instrument_token, timeframe, nse_interval, 750, "NFO")
+    df_index = get_historical_data(angel_obj, option.instrument_token, timeframe, nse_interval, 1250, "NFO")
     df_index['timestamp'] = pd.to_datetime(df_index['timestamp'])
     # Remove the delta for current date [uncomment below line, if testing on weekend]
     # today = (pd.Timestamp.now() - pd.Timedelta(days=2)).date()
-    today = pd.Timestamp.now().date()
-    filtered_df = df_index[df_index['timestamp'].dt.date == today]
+    # today = pd.Timestamp.now().date()
+    # filtered_df = df_index[df_index['timestamp'].dt.date == today]
     # Remove the first 2 rows
-    filtered_df = filtered_df.iloc[2:].reset_index(drop=True)
+    # filtered_df = filtered_df.iloc[2:].reset_index(drop=True)
 
     # apply candle percentage
-    filtered_df['candle_percentage'] = filtered_df.apply(candle_percentage, axis=1)
-    return filtered_df
+    df_index['candle_percentage'] = df_index.apply(candle_percentage, axis=1)
+    return df_index
 
 
 def get_small_candle_index(df):

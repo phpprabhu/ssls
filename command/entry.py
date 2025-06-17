@@ -10,7 +10,7 @@ from sslsapp.models.model import Options, TradeSettings, DciEarnings, Indexes, L
 import exchange.angel as angel
 import alert.discord as discord
 import helper.date_ist as date_ist
-from strategy.ssl import check_low_break
+from strategy.ssl import check_ssl_short
 from sqlalchemy import and_, asc, desc, func
 from sqlalchemy.orm.exc import NoResultFound
 
@@ -20,8 +20,8 @@ def check_entry():
     current_datetime = date_ist.ist_time()
     print(current_datetime)
 
-    start_time = datetime.strptime("09:24", "%H:%M").time()
-    end_time = datetime.strptime("15:10", "%H:%M").time()
+    start_time = datetime.strptime("09:15", "%H:%M").time()
+    end_time = datetime.strptime("15:28", "%H:%M").time()
 
     if start_time <= current_datetime.time() <= end_time:
         process_trade_if_possible()
@@ -65,70 +65,69 @@ def process_option_trade(angel_obj, index, option_type):
 
         df_option = angel.get_3min_olhcv(angel_obj, option)
 
-        small_candle_index = angel.get_small_candle_index(df_option)
+        # small_candle_index = angel.get_small_candle_index(df_option)
+        # print(small_candle_index)
+        #
+        # if small_candle_index is None:
+        #     print("All candles are big")
+        #     return
 
-        if small_candle_index is None:
-            print("All candles are big")
-            return
-
-        if check_low_break(df_option, small_candle_index):
+        if check_ssl_short(df_option):
             print('Entering Trade')
-            execute_trade(angel_obj, option, option_type, atm_strike, small_candle_index)
+            execute_trade(angel_obj, option)
 
 
-def execute_trade(angel_obj, option, option_type, atm_strike, small_candle_index):
-    otm_options = get_otm_options(option_type, atm_strike)
-    otm_instrument_tokens = [otm_option.instrument_token for otm_option in otm_options]
+def execute_trade(angel_obj, option):
+    # otm_options = get_otm_options(option_type, atm_strike)
+    # otm_instrument_tokens = [otm_option.instrument_token for otm_option in otm_options]
+    #
+    # if otm_instrument_tokens:
+    #     closest_hedge, hedge_option = get_closest_hedge_option(angel_obj, otm_instrument_tokens)
+    #
+    #     if not hedge_option:
+    #         return
 
-    if otm_instrument_tokens:
-        closest_hedge, hedge_option = get_closest_hedge_option(angel_obj, otm_instrument_tokens)
+    margin_required = get_margin_required(angel_obj, option)
+    print(f"Margin required: {margin_required}")
+    max_lots = calculate_max_lots(margin_required)
+    print(f"Lots calculated: {max_lots}")
 
-        if not hedge_option:
-            return
+    if max_lots < 1:
+        print("No fund available for trade")
+        return
 
-        margin_required = get_margin_required(angel_obj, option, closest_hedge)
-        print(f"Margin required: {margin_required}")
-        max_lots = calculate_max_lots(margin_required)
-        print(f"Lots calculated: {max_lots}")
-
-        if max_lots < 1:
-            print("No fund available for trade")
-            return
-
-        place_orders(angel_obj, option, hedge_option, max_lots, small_candle_index)
+    place_orders(angel_obj, option, max_lots)
 
 
-def place_orders(angel_obj, option, hedge_option, max_lots, small_candle_index):
+def place_orders(angel_obj, option, max_lots):
     trade_setting = TradeSettings.query.first()
     order_link_id = str(uuid.uuid4())
     option.in_trade = True
     option.order_link_id = order_link_id
-    hedge_option.order_link_id = order_link_id
 
     if trade_setting.demo:
         return
 
-    hedge_order_detail = execute_buy_order(angel_obj, hedge_option, max_lots)
-    if not hedge_order_detail:
-        return False
+    # hedge_order_detail = execute_buy_order(angel_obj, hedge_option, max_lots)
+    # if not hedge_order_detail:
+    #     return False
 
-    [sell_order_detail, main_order] = execute_sell_order(angel_obj, option, max_lots, small_candle_index)
+    [sell_order_detail, main_order] = execute_sell_order(angel_obj, option, max_lots)
     if not sell_order_detail:
         return False
 
-    tp_price = execute_tp_order(angel_obj, max_lots, hedge_option, hedge_order_detail, option, sell_order_detail, trade_setting)
+    tp_price = execute_tp_order(angel_obj, max_lots, option, sell_order_detail, trade_setting)
 
     main_order.min_guarantee_price = main_order.price + (tp_price - main_order.price) * config.GUARANTEE_PERCENTAGE
     db.session.commit()
 
 
-def execute_tp_order(angel_obj, lots, hedge_option, hedge_order_detail, sell_option, sell_order_detail, trade_setting):
+def execute_tp_order(angel_obj, lots, sell_option, sell_order_detail, trade_setting):
     not_achieved_earning = DciEarnings.query.filter_by(status='NOT-ACHIEVED').order_by(
         DciEarnings.day).first()
     tp = not_achieved_earning.earnings
-    hedge_price = hedge_order_detail['averageprice'] * lots * hedge_option.lot_size
     loss = db.session.query(func.sum(Loss.loss)).scalar() or 0.0
-    tp = tp + hedge_price - loss
+    tp = tp - loss
     tp_price = calculate_tp_price(lots, sell_order_detail['averageprice'],
                                   tp=tp, lot_size=sell_option.lot_size)
     tp_order_id = create_tp_order(angel_obj, sell_option, tp_price, lots, 'BUY', trade_setting.demo)
@@ -243,7 +242,7 @@ def calculate_tp_price(lot, price, tp=0, lot_size=15):
     return tp_price
 
 
-def execute_sell_order(angel_obj, option, max_lots, small_candle_index):
+def execute_sell_order(angel_obj, option, max_lots):
     sell_order_id = place_option_order(angel_obj, option, 'SELL', max_lots)
     if sell_order_id is None:
         send_alert(
@@ -273,7 +272,7 @@ def execute_sell_order(angel_obj, option, max_lots, small_candle_index):
                                         trade_charge, "SELL", "MAIN", "COMPLETE",
                                         0)
 
-        main_order.entry_candle_index = small_candle_index
+        # main_order.entry_candle_index = small_candle_index
         db.session.commit()
 
     return [sell_order_detail, main_order]
@@ -404,27 +403,19 @@ def get_closest_hedge_option(angel_obj, otm_instrument_tokens):
     return closest_hedge, hedge_option
 
 
-def get_margin_required(angel_obj, option, closest_hedge):
+def get_margin_required(angel_obj, option):
     time.sleep(2)
     main_sell_ltp = pd.DataFrame(angel_obj.getMarketData("LTP", {"NFO": [option.instrument_token]})['data']['fetched'])['ltp'][0]
     # Buffer added to minimize shortage of fund
     main_sell_ltp = main_sell_ltp + 3
 
     print(option.symbol)
-    print(closest_hedge)
     margin_params = {"positions": [
-        {"exchange": "NFO", "qty": option.lot_size, "price": closest_hedge['ltp'], "productType": "CARRYFORWARD",
-         "token": str(closest_hedge['symbolToken']), "tradeType": "BUY", "orderType": "MARKET"},
         {"exchange": "NFO", "qty": option.lot_size, "price": main_sell_ltp, "productType": "CARRYFORWARD",
          "token": str(option.instrument_token), "tradeType": "SELL", "orderType": "MARKET"}
     ]}
 
-    try:
-        latest_cookie = Cookie.query.order_by(Cookie.updated.desc()).first()
-        margin_required = angel.get_margin_required(latest_cookie.cookie, margin_params)
-    except Exception as e:
-        print(str(e))
-        margin_required = angel_obj.getMarginApi(margin_params)['data']['totalMarginRequired']
+    margin_required = angel_obj.getMarginApi(margin_params)['data']['totalMarginRequired']
 
     print(margin_required)
     return margin_required
