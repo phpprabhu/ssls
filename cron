@@ -1,0 +1,114 @@
+scp root@172.105.47.214:/root/ssls/sslsapp/ssls.db ssls-live.db
+scp ssls-live.db root@172.105.47.214:/root/ssls/sslsapp/ssls.db
+
+
+nohup flask start_processing > log/process.log 2>&1 & echo $! > process/check.pid
+
+
+# SSLS
+# ======================
+# everyday thrice flask fetch_option_token [morning & 3:40]
+40 3 * * 1-5 cd /root/ssls/ && export FLASK_APP=app.py && flask fetch_option_token >> /root/ssls/log/fetch_option_token.log 2>&1
+40 6 * * 1-5 cd /root/ssls/ && export FLASK_APP=app.py && flask fetch_option_token >> /root/ssls/log/fetch_option_token.log 2>&1
+10 10 * * 1-5 cd /root/ssls/ && export FLASK_APP=app.py && flask fetch_option_token >> /root/ssls/log/fetch_option_token.log 2>&1
+
+# flask update_near_token -> every 5 mins
+#*/5 3-10 * * 1-5 cd /root/ssls/ && export FLASK_APP=app.py && flask update_near_token >> /root/ssls/log/update_near_token.log 2>&1
+
+# flask check_exit -> every 1 min starting at 9:20 AM
+50-59 3 * * 1-5 cd /root/ssls/ && export FLASK_APP=app.py && flask check_exit >> /root/ssls/log/check_exit.log 2>&1
+*/1 4-10 * * 1-5 cd /root/ssls/ && export FLASK_APP=app.py && flask check_exit >> /root/ssls/log/check_exit.log 2>&1
+
+# flask check_entry -> every 1 min starting at 9:20 AM
+50-59 3 * * 1-5 cd /root/ssls/ && export FLASK_APP=app.py && flask check_entry >> /root/ssls/log/check_entry.log 2>&1
+*/1 4-10 * * 1-5 cd /root/ssls/ && export FLASK_APP=app.py && flask check_entry >> /root/ssls/log/check_entry.log 2>&1
+
+
+/etc/systemd/system/ssls_check_entry.service
+ssls_check_entry.service
+
+
+[Unit]
+Description=Run ssls check_entry Command
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/ssls/ssls_check_entry.sh
+
+
+
+/etc/systemd/system/ssls_check_entry.timer
+ssls_check_entry.timer
+
+
+[Unit]
+Description=Run ssls ssls_check_entry Command Every 10 Seconds (Weekdays Only)
+
+[Timer]
+OnBootSec=10s
+OnUnitActiveSec=10s
+
+[Install]
+WantedBy=timers.target
+
+
+
+
+sudo systemctl daemon-reload
+sudo systemctl enable ssls_check_entry.timer
+sudo systemctl start ssls_check_entry.timer
+
+
+sudo systemctl status ssls_check_entry.timer
+sudo systemctl status ssls_check_entry.service
+
+
+/root/ssls/ssls_check_entry.sh
+
+
+
+
+
+
+/etc/systemd/system/ssls_check_exit.service
+ssls_check_exit.service
+
+
+[Unit]
+Description=Run ssls check_exit Command
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/ssls/ssls_check_exit.sh
+
+
+
+/etc/systemd/system/ssls_check_exit.timer
+ssls_check_exit.timer
+
+
+[Unit]
+Description=Run ssls ssls_check_exit Command Every 10 Seconds (Weekdays Only)
+
+[Timer]
+OnBootSec=10s
+OnUnitActiveSec=10s
+
+[Install]
+WantedBy=timers.target
+
+
+
+
+sudo systemctl daemon-reload
+sudo systemctl enable ssls_check_exit.timer
+sudo systemctl start ssls_check_exit.timer
+
+
+sudo systemctl status ssls_check_exit.timer
+sudo systemctl status ssls_check_exit.service
+
+
+/root/ssls/ssls_check_exit.sh
