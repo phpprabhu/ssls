@@ -21,7 +21,7 @@ def check_entry():
     print(current_datetime)
 
     start_time = datetime.strptime("09:15", "%H:%M").time()
-    end_time = datetime.strptime("15:28", "%H:%M").time()
+    end_time = datetime.strptime("23:28", "%H:%M").time()
 
     if start_time <= current_datetime.time() <= end_time:
         process_trade_if_possible()
@@ -57,24 +57,29 @@ def is_trade_done_for_today(index_name):
 
 def process_option_trade(angel_obj, index, option_type):
     atm_strike = get_atm_strike(angel_obj, index)
-    selected_strike = get_selected_strike(atm_strike, index.option_sizing, option_type)
+    selected_strikes = get_selected_strikes(atm_strike, index.option_sizing, option_type)
 
     if not get_in_trade_option(index.name):
-        option = Options.query.filter_by(instrument_type=option_type, strike=selected_strike, name=index.name).first()
-        print(option.symbol)
+        selected_options = Options.query.filter(
+            Options.instrument_type == option_type,
+            Options.strike.in_(selected_strikes),
+            Options.name == index.name
+        ).all()
 
-        df_option = angel.get_3min_olhcv(angel_obj, option)
+        for option in selected_options:
+            df_option = angel.get_3min_olhcv(angel_obj, option)
 
-        # small_candle_index = angel.get_small_candle_index(df_option)
-        # print(small_candle_index)
-        #
-        # if small_candle_index is None:
-        #     print("All candles are big")
-        #     return
+            # small_candle_index = angel.get_small_candle_index(df_option)
+            # print(small_candle_index)
+            #
+            # if small_candle_index is None:
+            #     print("All candles are big")
+            #     return
 
-        if check_ssl_short(df_option):
-            print('Entering Trade')
-            execute_trade(angel_obj, option)
+            if check_ssl_short(df_option):
+                print('Entering Trade')
+                execute_trade(angel_obj, option)
+                break
 
 
 def execute_trade(angel_obj, option):
@@ -351,9 +356,12 @@ def get_atm_strike(angel_obj, index):
     return round_to_nearest(df_option.iloc[-1]['close'], index.option_sizing)
 
 
-def get_selected_strike(atm_strike, option_sizing, option_type):
-    return atm_strike - (option_sizing * config.STRIKE_SELECTION_ITM) if option_type == "CE" else atm_strike + (
-            option_sizing * config.STRIKE_SELECTION_ITM)
+def get_selected_strikes(atm_strike, option_sizing, option_type):
+    selected_strikes = []
+    for i in range(config.STRIKE_SELECTION_FROM_ITM, config.STRIKE_SELECTION_TO_ITM):
+        selected_strikes.append(atm_strike - (option_sizing * i) if option_type == "CE" else atm_strike + (
+            option_sizing * i))
+    return selected_strikes
 
 
 def get_otm_options(option_type, atm_strike):
@@ -426,7 +434,9 @@ def calculate_max_lots(margin_required):
     usable_fund = fund_available * (1 - config.BUFFER_PERCENTAGE)
     lots = int(usable_fund // margin_required)
 
-    return lots - 1 if lots > 1 else lots
+    lots = lots - 1 if lots > 1 else lots
+    lots = config.MAX_SELL_LOT if lots > config.MAX_SELL_LOT else lots
+    return lots
 
 
 def send_alert(message):
@@ -451,7 +461,7 @@ def margin():
     angel_obj = angel.get_angel_obj()
     index = Indexes.query.filter_by(enabled=True).first()
     atm_strike = get_atm_strike(angel_obj, index)
-    selected_strike = get_selected_strike(atm_strike, index.option_sizing, 'CE')
+    selected_strike = get_selected_strikes(atm_strike, index.option_sizing, 'CE')
     option = Options.query.filter_by(instrument_type='CE', strike=selected_strike, name=index.name).first()
     otm_options = get_otm_options('CE', atm_strike)
     otm_instrument_tokens = [otm_option.instrument_token for otm_option in otm_options]

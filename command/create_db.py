@@ -2,7 +2,7 @@ from sslsapp import app, db
 import click
 from flask.cli import with_appcontext
 from sslsapp.models.model import TradeSettings, Indexes, LastRun, Loss, Orders, DciEarnings, Cookie
-from command.tokens import fetch_option_token, update_near_token
+from command.tokens import fetch_option_token
 import exchange.angel as angel
 import math
 from datetime import datetime, timedelta
@@ -25,7 +25,6 @@ def restart(ctx):
     ctx.invoke(create_db)
     ctx.invoke(create_achievement, days=100, interest_rate=1.0, investment=0)
     ctx.invoke(fetch_option_token)
-    ctx.invoke(update_near_token)
 
     create_order_entry('CE', total_ce_fees_recovery, total_ce_loss_recovery)
     create_order_entry('PE', total_pe_fees_recovery, total_pe_loss_recovery)

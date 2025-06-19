@@ -124,8 +124,8 @@ def test_process():
 
 def process_option_order(option_type):
     in_trade_option = Options.query.filter_by(in_trade=True, instrument_type=option_type).first()
-    current_datetime = date_ist.ist_time()
-    cut_off_time = current_datetime.replace(hour=15, minute=27, second=0, microsecond=0)
+    # current_datetime = date_ist.ist_time()
+    # cut_off_time = current_datetime.replace(hour=15, minute=27, second=0, microsecond=0)
 
     if in_trade_option:
         angel_obj = angel.get_angel_obj()

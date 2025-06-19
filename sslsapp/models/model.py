@@ -131,6 +131,22 @@ class Loss(db.Model):
     date = db.Column(db.Date, nullable=True)
 
 
+class CombinedLoss(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    loss_ce = db.Column(db.Float, default=0, nullable=False)
+    loss_pe = db.Column(db.Float, default=0, nullable=False)
+    date = db.Column(db.Date, nullable=True)
+
+
+class CombinedPnl(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    pnl_ce = db.Column(db.Float, default=0, nullable=False)
+    pnl_pe = db.Column(db.Float, default=0, nullable=False)
+    fee_ce = db.Column(db.Float, default=0, nullable=False)
+    fee_pe = db.Column(db.Float, default=0, nullable=False)
+    date = db.Column(db.Date, nullable=True)
+
+
 class LastRun(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     cron = db.Column(db.String(500), nullable=True)  # ALL-OPTIONS / NEAR
