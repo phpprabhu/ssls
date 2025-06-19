@@ -129,157 +129,75 @@ def process_option_order(option_type):
 
     if in_trade_option:
         angel_obj = angel.get_angel_obj()
-
-        tp_order = get_tp_order(in_trade_option, option_type)
+        main_order = get_main_order(in_trade_option, option_type)
 
         olhcv = angel.get_3min_olhcv(angel_obj, in_trade_option)
-        if tp_order is None:
-            discord.send_alert('cascadeoptions',
-                               f"There is {option_type} trade without TP order | {in_trade_option.symbol}({in_trade_option.instrument_token}) | order_ink_id: {in_trade_option.order_link_id}")
-        else:
-            if handle_tp_order(angel_obj, in_trade_option, tp_order, olhcv):
-                return False
 
-            index = Indexes.query.filter_by(name=in_trade_option.name).first()
+        if check_ssl_long(olhcv):
+                # Close SELL trade
+                order_id = place_option_order(angel_obj, in_trade_option.symbol, in_trade_option.instrument_token,
+                                              'MARKET', 'BUY', main_order.lot * in_trade_option.lot_size,
+                                              exchange=in_trade_option.exchange)
 
-            enter_order = Orders.query.filter_by(
-                order_link_id=in_trade_option.order_link_id,
-                type=in_trade_option.instrument_type,
-                status='COMPLETE'
-            ).filter(
-                Orders.order_type.in_(["MAIN"])
-            ).order_by(
-                Orders.created.desc()
-            ).first()
+                if order_id is None:
+                    alert_msg = f"Got signal for '{in_trade_option.symbol}({in_trade_option.instrument_token})', but order failed, lot = {main_order.lot}"
+                    print(alert_msg)
+                    discord.send_alert('cascadeoptions', alert_msg)
+                    return False
 
-            if check_high_break(olhcv, enter_order.entry_candle_index) or check_guarantee_reached(enter_order, olhcv) or (datetime.strptime(in_trade_option.symbol[5:12], "%d%b%y").date() != datetime.today().date() and current_datetime > cut_off_time):
-                if tp_order.is_demo:
-                    if tp_order is not None:
-                        tp_order.status = "CANCELLED"
-                        db.session.commit()
-                    discord.send_alert('cascadeoptions',
-                                       f"Cancelled TP order | {in_trade_option.symbol}({in_trade_option.instrument_token}) | order_ink_id: {in_trade_option.order_link_id}")
+                time.sleep(3)
+                print("Getting Available fund")
+                profile = angel_obj.rmsLimit()['data']
+                fund_available = float(profile['utilisedpayout'])
+                print(fund_available)
 
-                    order_id = generate_random_digit_number(7)
-                    profile = angel_obj.rmsLimit()['data']
-                    fund_available = float(profile['utilisedpayout'])
+                print("Before getting order detail")
+                order_detail = get_order_detail_with_retries(angel_obj, order_id)
 
-                    sell_exit_order = create_order_entry(in_trade_option, order_id, olhcv.iloc[-1]['close'],
-                                                        tp_order.lot,
-                                                        0, "BUY", "EXIT", "COMPLETE",
-                                                        fund_available)
-                    loss_recovered = calculate_sell_trade_pnl(in_trade_option, sell_exit_order)
+                if order_detail is None:
+                    alert_msg = f"Exit Buy Order created: '{order_id}, Link Id: {in_trade_option.order_link_id}, but failed to retrieve, manually add it."
+                    print(alert_msg)
+                    discord.send_alert('cascadeoptions', alert_msg)
 
-                    if loss_recovered > 0:
-                        mark_recover_fees_and_loss(profit=loss_recovered)
-                        pnl.update_dci_earning(loss_recovered)
+                if order_detail is not None and order_detail['status'] in ["complete"]:
+                    # Calculate fees
+                    print("Getting trade charge")
+                    trade_charge = calculate_trade_charge(angel_obj, in_trade_option,
+                                                          (main_order.lot * in_trade_option.lot_size),
+                                                          order_detail['averageprice'], "BUY")
+
+                    sell_exit_order = create_order_entry(in_trade_option, order_id, order_detail['averageprice'], main_order.lot,
+                                               trade_charge, "BUY", "EXIT", "COMPLETE",
+                                               fund_available)
+                    # loss_recovered = calculate_sell_trade_pnl(in_trade_option, sell_exit_order)
+
+                    print("Get TP profit")
+                    time.sleep(3)
+                    print("After Sleep Get TP profit")
+                    loss_recovered, unrealized_profit = get_tp_profit(angel_obj)
 
                     in_trade_option.in_trade = False
                     in_trade_option.active_side = None
                     db.session.commit()
-                else:
-                    tp_order = cancel_tp_order(angel_obj, in_trade_option, option_type)
-                    discord.send_alert('cascadeoptions',
-                                       f"Cancelled TP order | {in_trade_option.symbol}({in_trade_option.instrument_token}) | order_ink_id: {in_trade_option.order_link_id}")
 
-                    # Close SELL trade
-                    order_id = place_option_order(angel_obj, in_trade_option.symbol, in_trade_option.instrument_token,
-                                                  'MARKET', 'BUY', tp_order.lot * in_trade_option.lot_size,
-                                                  exchange=in_trade_option.exchange)
+                    if loss_recovered > 0:
+                        mark_recover_fees_and_loss(profit=loss_recovered)
+                        recovered_loss = apply_profit_to_losses(profit=loss_recovered)
+                        loss = db.session.query(func.sum(Loss.loss)).scalar()
+                        if loss == 0:
+                            loss_recovered = loss_recovered - recovered_loss
+                            pnl.update_dci_earning(loss_recovered)
+                    else:
+                        today = date.today()
+                        existing_loss = Loss.query.filter_by(date=today).first()
 
-                    if order_id is None:
-                        alert_msg = f"Got signal for '{in_trade_option.symbol}({in_trade_option.instrument_token})', but order failed, lot = {tp_order.lot}"
-                        print(alert_msg)
-                        discord.send_alert('cascadeoptions', alert_msg)
-                        return False
-
-                    time.sleep(3)
-                    print("Getting Available fund")
-                    profile = angel_obj.rmsLimit()['data']
-                    fund_available = float(profile['utilisedpayout'])
-                    print(fund_available)
-
-                    print("Before getting order detail")
-                    order_detail = get_order_detail_with_retries(angel_obj, order_id)
-
-                    if order_detail is None:
-                        alert_msg = f"Exit Buy Order created: '{order_id}, Link Id: {in_trade_option.order_link_id}, but failed to retrieve, manually add it."
-                        print(alert_msg)
-                        discord.send_alert('cascadeoptions', alert_msg)
-
-                    if order_detail is not None and order_detail['status'] in ["complete"]:
-                        # Calculate fees
-                        print("Getting trade charge")
-                        trade_charge = calculate_trade_charge(angel_obj, in_trade_option,
-                                                              (tp_order.lot * in_trade_option.lot_size),
-                                                              order_detail['averageprice'], "BUY")
-
-                        sell_exit_order = create_order_entry(in_trade_option, order_id, order_detail['averageprice'], tp_order.lot,
-                                                   trade_charge, "BUY", "EXIT", "COMPLETE",
-                                                   fund_available)
-                        # loss_recovered = calculate_sell_trade_pnl(in_trade_option, sell_exit_order)
-
-                        print("Get TP profit")
-                        time.sleep(3)
-                        print("After Sleep Get TP profit")
-                        loss_recovered, unrealized_profit = get_tp_profit(angel_obj)
-
-                        in_trade_option.in_trade = False
-                        in_trade_option.active_side = None
-                        db.session.commit()
-
-                        if loss_recovered > 0:
-                            mark_recover_fees_and_loss(profit=loss_recovered)
-                            recovered_loss = apply_profit_to_losses(profit=loss_recovered)
-                            loss = db.session.query(func.sum(Loss.loss)).scalar()
-                            if loss == 0:
-                                loss_recovered = loss_recovered - recovered_loss
-                                pnl.update_dci_earning(loss_recovered)
+                        if existing_loss:
+                            existing_loss.loss = loss_recovered
                         else:
-                            today = date.today()
-                            existing_loss = Loss.query.filter_by(date=today).first()
+                            new_loss = Loss(loss=loss_recovered, date=today)
+                            db.session.add(new_loss)
 
-                            if existing_loss:
-                                existing_loss.loss = loss_recovered
-                            else:
-                                new_loss = Loss(loss=loss_recovered, date=today)
-                                db.session.add(new_loss)
-
-                            db.session.commit()
-
-            # If less than 70%, mark as guarantee percentage
-            if enter_order.is_guarantee_reached is False and olhcv.iloc[-1]['low'] <= enter_order.min_guarantee_price:
-                enter_order.is_guarantee_reached = True
-                db.session.commit()
-                discord.send_alert('cascadeoptions', "Price reached the minimum guarantee threshold price : " + str(enter_order.min_guarantee_price))
-
-    if current_datetime > cut_off_time:
-        # close all hedges
-        angel_obj = angel.get_angel_obj()
-        hedge_orders = Orders.query.filter_by(order_type='HEDGE', status='COMPLETE').all()
-        for hedge_order in hedge_orders:
-            if datetime.strptime(hedge_order.symbol[5:12], "%d%b%y").date() == datetime.today().date():
-                continue
-
-            hedge_exit_order_id = place_option_order(angel_obj, hedge_order.symbol, hedge_order.token,
-                                          'MARKET', 'SELL', hedge_order.lot * 75,
-                                          exchange=hedge_order.exchange)
-            hedge_order.status = 'CLOSED'
-
-        time.sleep(3)
-        print("After Sleep Get TP profit")
-        loss_recovered, unrealized_profit = get_tp_profit(angel_obj)
-        if loss_recovered < 0:
-            today = date.today()
-            existing_loss = Loss.query.filter_by(date=today).first()
-
-            if existing_loss:
-                existing_loss.loss = loss_recovered
-            else:
-                new_loss = Loss(loss=loss_recovered, date=today)
-                db.session.add(new_loss)
-
-        db.session.commit()
+                        db.session.commit()
 
 
 def create_order_entry(in_trade_option, exchange_order_id, price, lot, trade_charge, side, type, status,
@@ -553,6 +471,10 @@ def get_tp_order(in_trade_option, option_type):
     return Orders.query.filter_by(type=option_type, order_link_id=in_trade_option.order_link_id,
                                   order_type='TP', status='open').first()
 
+
+def get_main_order(in_trade_option, option_type):
+    return Orders.query.filter_by(type=option_type, order_link_id=in_trade_option.order_link_id,
+                                  order_type='MAIN', status='COMPLETE').first()
 
 def calculate_tp_price(lot, price, previous_loss=0, lot_size=15):
     total_value = lot * lot_size * price

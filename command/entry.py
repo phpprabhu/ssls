@@ -21,7 +21,7 @@ def check_entry():
     print(current_datetime)
 
     start_time = datetime.strptime("09:15", "%H:%M").time()
-    end_time = datetime.strptime("23:28", "%H:%M").time()
+    end_time = datetime.strptime("15:30", "%H:%M").time()
 
     if start_time <= current_datetime.time() <= end_time:
         process_trade_if_possible()
