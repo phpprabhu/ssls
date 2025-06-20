@@ -67,6 +67,7 @@ def process_option_trade(angel_obj, index, option_type):
         ).all()
 
         for option in selected_options:
+            time.sleep(2)
             df_option = angel.get_3min_olhcv(angel_obj, option)
 
             # small_candle_index = angel.get_small_candle_index(df_option)
